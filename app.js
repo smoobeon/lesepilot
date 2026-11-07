@@ -1,0 +1,76 @@
+'use strict';
+// Illustrative sample items only. NOT a validated Reuter-Liehr phoneme-stage catalogue.
+const AREAS=[
+ {id:'laute',name:'Laute',stage:1,items:['m','s','a','l']},
+ {id:'silben',name:'Silben',stage:1,items:['ma','so','la','mu']},
+ {id:'st1',name:'Wörter · Stufe 1',stage:1,items:['Mama','Salami','Melone','Limo']},
+ {id:'st2',name:'Wörter · Stufe 2',stage:2,items:['Dose','Nadel','Tomate','Kino']},
+ {id:'st3',name:'Wörter · Stufe 3',stage:3,items:['Schlange','Flasche','Schleife','Schnee']},
+ {id:'saetze',name:'Sätze',stage:1,items:['Mama malt.','Lilo mag Melonen.','Die Sonne scheint.']}
+];
+const TEST_ITEMS=[...AREAS.flatMap((a,ai)=>a.items.slice(0,3).map(word=>({ai,word})))];
+const STORAGE='lesepilot_demo_v1';
+const load=()=>{try{return JSON.parse(localStorage.getItem(STORAGE))||{}}catch{return {}}};
+const stored=load();
+const state={page:'home',name:stored.name||'Kind 1',test:stored.test||[],testIndex:stored.testIndex||0,area:2,item:0,training:stored.training||[],started:0,onset:null,heard:'',speechState:'',recording:false,audio:null,recognition:null,manualNeeded:false};
+const app=document.getElementById('app');
+const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const persist=()=>{try{localStorage.setItem(STORAGE,JSON.stringify({name:state.name,test:state.test,testIndex:state.testIndex,training:state.training}))}catch{}};
+const normalize=s=>s.toLocaleLowerCase('de-CH').replace(/[^\p{L}]/gu,'');
+const button=(label,action,cls='btn',extra='')=>`<button class="${cls}" data-action="${action}" ${extra}>${label}</button>`;
+const header=(title,subtitle)=>`<h1>${title}</h1><p class="muted sub">${subtitle}</p>`;
+const badge=word=>`<span class="pill">${escapeHtml(word)}</span>`;
+const pct=(n,d)=>d?Math.round(n*100/d):0;
+const correct=x=>x.result==='correct';
+function score(){let successes=state.test.filter(correct).length;return {successes,percentage:pct(successes,state.test.length)};}
+function recommendedArea(){if(!state.test.length)return 0;for(let ai=0;ai<AREAS.length;ai++){const a=state.test.filter(x=>x.ai===ai);if(a.length<3||pct(a.filter(correct).length,a.length)<75)return ai;}return AREAS.length-1;}
+function isTestFinished(){return state.testIndex>=TEST_ITEMS.length}
+function screen(){
+ const tabs=[['home','🏠','Start'],['test','🧩','Einstiegstest'],['train','📖','Üben'],['teacher','📊','Lehrperson']];
+ app.innerHTML=`<div class="shell"><header class="top"><div class="brand"><div class="mark">📖</div><div><div class="brandname">LesePilot</div><div class="subtitle">Dein persönlicher Leseweg</div></div><span class="demo">DEMO</span></div></header><nav class="nav" aria-label="Bereiche">${tabs.map(([id,ico,text])=>`<button class="tab" data-page="${id}" ${state.page===id?'aria-current="page"':''}><span>${ico}</span>${text}</button>`).join('')}</nav><main class="main">${view()}</main><footer class="foot">Prototyp mit beispielhaftem Wortmaterial. Kein diagnostischer Test und keine validierte Stufenzuordnung.<span class="install"> · Installierte Vollbildansicht</span></footer></div>`;
+}
+function view(){
+ if(state.page==='home')return home();
+ if(state.page==='test')return test();
+ if(state.page==='train')return train();
+ return teacher();
+}
+function home(){return header(`Hallo, ${escapeHtml(state.name)}! 👋`,'Willkommen zu deinem persönlichen Lesetraining.')+`<section class="card hero"><div class="eyebrow">DEIN LESEWEG</div><div class="big">${state.test.length?`${score().percentage}% richtig`:'Bereit zum Start?'}</div><p class="sub">${state.test.length?'Entdecke deine Ergebnisse und passende Übungen.':'Finde heraus, welche Laute, Silben und Wörter du schon lesen kannst.'}</p>${button(state.test.length?'Einstiegstest erneut beginnen':'Einstiegstest starten','restart','btn primary full')}</section><div class="grid2"><section class="card"><div style="font-size:29px">🎯</div><h2 style="margin-top:9px">Einstiegstest</h2><div class="sub muted">Dein aktueller Lernstand</div></section><section class="card"><div style="font-size:29px">🎤</div><h2 style="margin-top:9px">Laut lesen</h2><div class="sub muted">Mit Mikrofon oder manuell</div></section></div><section class="card"><h2>Entdecke die Übungen</h2><p class="sub muted">Laute, Silben, Wörter und Sätze in deinem Tempo.</p>${button('Zu den Übungen','go-train','btn full secondary')}</section><div class="notice">Die App speichert Demo-Ergebnisse nur lokal auf diesem Gerät. Gesprochene Inhalte können bei aktivierter Browser-Spracherkennung vom Browserdienst verarbeitet werden.</div>`;}
+function exercise(word,kind,area){
+ const line=kind==='test'?'Einstiegstest':'Lesetraining';
+ return `<section class="card"><div class="row">${badge(line)}<span class="muted sub">${escapeHtml(area)}</span></div><div class="word ${word.includes(' ')?'sentence':''}">${escapeHtml(word)}</div><div id="speechFeedback" class="feedback" role="status">${escapeHtml(state.speechState||'Lies laut vor. Tippe für einen Mikrofontest auf das Mikrofon.')}</div>${button(state.recording?'🎙️ Ich höre zu …':'🎤 Mikrofon ausprobieren','mic','btn primary full',state.recording?'disabled':'')}<div class="gap"></div><p class="sub muted" style="text-align:center">Die automatische Erkennung ist experimentell. Bitte die Antwort immer selbst bestätigen.</p></section><div class="label">Wie hat das Kind gelesen?</div><div class="buttonrow">${button('✓ Richtig','correct','btn success')}${button('✕ Noch nicht','incorrect','btn error')}</div>${state.heard?`<p class="sub muted">Zuletzt erkannt: «${escapeHtml(state.heard)}»</p>`:''}${state.onset!==null?`<p class="sub muted">Geschätzter Sprechbeginn: ${(state.onset/1000).toFixed(2).replace('.',',')} s (experimentell).</p>`:''}`;
+}
+function test(){if(isTestFinished())return testDone();const current=TEST_ITEMS[state.testIndex];return header('Einstiegstest','Lies die Aufgaben vor und bewerte die Antwort.')+`<div class="row">${badge(AREAS[current.ai].name)}<span class="sub muted">${state.testIndex+1} von ${TEST_ITEMS.length}</span></div><div class="progress"><div class="fill" style="width:${pct(state.testIndex,TEST_ITEMS.length)}%"></div></div>${exercise(current.word,'test',AREAS[current.ai].name)}<div class="gap"></div>${button('Test vorzeitig auswerten','finish','btn full')}<p class="sub muted">Für den späteren Einsatz wäre ein adaptiver Test mit variabler Länge vorgesehen; diese Demo zeigt eine feste kurze Aufgabenfolge.</p>`;}
+function testDone(){const s=score();const idx=recommendedArea();return header('Test abgeschlossen 🎉','Hier ist die erste, vereinfachte Förderübersicht.')+`<section class="card" style="text-align:center"><div class="muted sub">Korrekt gelesen</div><div class="big" style="color:#0d9488">${s.successes} / ${state.test.length}</div><div class="sub">Empfohlener Übungsbereich: <strong>${escapeHtml(AREAS[idx].name)}</strong></div></section>${button('Förderplan ansehen','go-teacher','btn primary full')}<div class="gap"></div>${button('Einstiegstest wiederholen','restart','btn full')}`;}
+function train(){let a=AREAS[state.area];return header('Lesetraining','Übe auf deiner aktuellen Lernstufe.')+`<label for="area" class="label">Übungsbereich</label><select class="select" id="area">${AREAS.map((x,i)=>`<option value="${i}" ${i===state.area?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select><div class="row">${badge(`Beispielmaterial · ${a.stage}. Stufe`)}<span class="sub muted">${state.item+1} / ${a.items.length}</span></div>${exercise(a.items[state.item],'train',a.name)}<div class="gap"></div><div class="buttonrow">${button('← Zurück','prev','btn')}${button('Weiter →','next','btn')}</div>${state.training.length?`<p class="sub muted">Bisher ${state.training.length} Übungsbewertungen auf diesem Gerät.</p>`:''}`;}
+function teacher(){const s=score();let avgOnsets=state.test.filter(x=>x.onset!==null&&typeof x.onset==='number');const mean=avgOnsets.length?(avgOnsets.reduce((sum,x)=>sum+x.onset,0)/avgOnsets.length/1000).toFixed(2).replace('.',',')+' s':'–';let recommend=recommendedArea();return header('Förderübersicht','Demoansicht für die IF-Lehrperson.')+`<section class="card"><label class="label" for="name">Kinderprofil</label><input class="input" id="name" type="text" maxlength="40" autocomplete="off" value="${escapeHtml(state.name)}"><div class="sub muted">Bitte für diese Demo keine echten Personendaten eingeben.</div></section><div class="grid3"><div class="tile"><small>Getestet</small><strong>${state.test.length}</strong></div><div class="tile"><small>Korrekt</small><strong>${state.test.length?s.percentage+'%':'–'}</strong></div><div class="tile"><small>Ø Beginn*</small><strong style="font-size:17px">${mean}</strong></div></div><section class="card"><h2>Ergebnisse je Bereich</h2>${AREAS.map((a,ai)=>{let values=state.test.filter(x=>x.ai===ai),v=pct(values.filter(correct).length,values.length);return `<div class="itemrow"><span>${escapeHtml(a.name)}</span><div class="progress"><div class="fill" style="width:${v}%"></div></div><strong style="text-align:right">${values.length?v+'%':'–'}</strong></div>`}).join('')}<div class="notice">* Geschätzter Mikrofon-Sprechbeginn nur bei erfolgreicher Audioanalyse; kein validiertes Mass für Automatisierung.</div></section><section class="card"><h2>Automatische Empfehlung</h2><p class="sub muted">${state.test.length?`Starte mit «${escapeHtml(AREAS[recommend].name)}». Die Demo sucht den ersten Bereich mit weniger als 75 % korrekt gelesenen Aufgaben (oder fehlenden Ergebnissen).`:'Starte zuerst den Einstiegstest, um eine Empfehlung zu erhalten.'}</p>${button('Empfohlene Übungen öffnen','recommend','btn primary full')}</section><section class="card"><h2>Einzelbewertungen</h2>${state.test.length?state.test.map(x=>`<div class="testline"><span>${escapeHtml(x.word)}</span><span>${x.result==='correct'?'✓ richtig':'✕ noch nicht'} ${typeof x.onset==='number'?'· '+(x.onset/1000).toFixed(1)+'s':''}</span></div>`).join(''):'<p class="sub muted">Noch keine Einträge.</p>'}</section>${button('Alle Demo-Daten löschen','reset','btn error full')}`;}
+function abortAudio(){if(state.recognition){try{state.recognition.abort()}catch{}}state.recognition=null;if(state.audio){state.audio.cleanup()}state.audio=null;state.recording=false;}
+function go(page){abortAudio();state.page=page;state.speechState='';state.heard='';state.onset=null;state.started=Date.now();screen();window.scrollTo({top:0,behavior:'instant'});}
+function grade(result){const item=state.page==='test'?TEST_ITEMS[state.testIndex]:{ai:state.area,word:AREAS[state.area].items[state.item]};if(!item)return;const entry={...item,result,at:Date.now(),onset:state.onset};if(state.page==='test'){state.test.push(entry);state.testIndex+=1;}else state.training.push(entry);persist();abortAudio();state.speechState='';state.heard='';state.onset=null;state.started=Date.now();screen();}
+function handleAction(action){if(action==='mic'){microphone();return;}if(action==='correct'||action==='incorrect'){grade(action);return;}if(action==='restart'){state.test=[];state.testIndex=0;persist();go('test');return;}if(action==='finish'){state.testIndex=TEST_ITEMS.length;persist();go('test');return;}if(action==='go-train'){go('train');return;}if(action==='go-teacher'){go('teacher');return;}if(action==='recommend'){state.area=recommendedArea();state.item=0;go('train');return;}if(action==='next'||action==='prev'){state.item=(state.item+(action==='next'?1:-1)+AREAS[state.area].items.length)%AREAS[state.area].items.length;go('train');return;}if(action==='reset'){if(confirm('Alle lokal gespeicherten Demo-Ergebnisse wirklich löschen?')){localStorage.removeItem(STORAGE);state.test=[];state.testIndex=0;state.training=[];state.name='Kind 1';go('teacher');}return;}}
+function notify(text){state.speechState=text;const status=document.getElementById('speechFeedback');if(status)status.textContent=text;}
+async function microphone(){
+ if(state.recording)return;
+ if(!navigator.mediaDevices?.getUserMedia){notify('Das Mikrofon benötigt eine HTTPS-Verbindung oder localhost. Bitte manuell bewerten.');return;}
+ state.recording=true;state.heard='';state.onset=null;state.started=performance.now();notify('Mikrofon wird gestartet …');
+ let stream;
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})}catch(e){state.recording=false;notify('Kein Mikrofonzugriff: '+(e.name||'Fehler')+'. Bitte manuell bewerten.');return;}
+ // Voice activity detection estimates onset; speech recognition runs separately.
+ let ctx,analyser,source,raf=0,finished=false,blocks=0;const begin=performance.now();
+ try{ctx=new (window.AudioContext||window.webkitAudioContext)();source=ctx.createMediaStreamSource(stream);analyser=ctx.createAnalyser();analyser.fftSize=1024;source.connect(analyser);const buf=new Uint8Array(analyser.fftSize);
+ const sample=()=>{if(finished)return;analyser.getByteTimeDomainData(buf);let power=0;for(let i=0;i<buf.length;i++){let d=(buf[i]-128)/128;power+=d*d;}let rms=Math.sqrt(power/buf.length);blocks=rms>.045?blocks+1:0;if(state.onset===null&&blocks>=3){state.onset=Math.round(performance.now()-begin);notify('Sprache erkannt – weiter vorlesen …');}raf=requestAnimationFrame(sample)};sample();
+ }catch(e){/* Browser audio analyser unsupported: manual option still works. */}
+ const cleanup=()=>{finished=true;if(raf)cancelAnimationFrame(raf);for(const tr of stream.getTracks())tr.stop();if(ctx)ctx.close().catch(()=>{});};
+ state.audio={cleanup};
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){notify('Mikrofon aktiv, aber keine Browser-Spracherkennung verfügbar. Bitte manuell bewerten.');setTimeout(()=>{if(state.audio?.cleanup===cleanup){abortAudio();notify('Spracherkennung nicht verfügbar. Bitte manuell bewerten.');screen();}},2300);return;}
+ const rec=new SR();state.recognition=rec;rec.lang='de-DE';rec.continuous=false;rec.interimResults=false;rec.maxAlternatives=3;
+ rec.onresult=e=>{const expected=state.page==='test'?TEST_ITEMS[state.testIndex]?.word:AREAS[state.area]?.items[state.item];const got=e.results[0]?.[0]?.transcript||'';state.heard=got;const same=normalize(got)===normalize(expected||'');abortAudio();notify(`Erkannt: «${got}» · ${same?'Wortgleich':'abweichend'}. Bitte manuell bestätigen.`);screen();};
+ rec.onerror=e=>{if(state.recognition!==rec)return;abortAudio();notify('Spracherkennung fehlgeschlagen ('+e.error+'). Bitte manuell bewerten.');screen();};
+ rec.onend=()=>{if(state.recording){abortAudio();notify('Aufnahme beendet. Bitte manuell bewerten.');screen();}};
+ try{rec.start();notify('🎙️ Ich höre zu … Bitte jetzt vorlesen.');screen();}catch(e){abortAudio();notify('Spracherkennung konnte nicht starten. Bitte manuell bewerten.');screen();}
+}
+app.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.page)go(b.dataset.page);else if(b.dataset.action)handleAction(b.dataset.action)});
+app.addEventListener('change',e=>{if(e.target.id==='area'){state.area=Number(e.target.value);state.item=0;go('train')}if(e.target.id==='name'){state.name=e.target.value.trim()||'Kind 1';persist();screen()}});
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+state.started=Date.now();screen();
